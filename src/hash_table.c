@@ -70,8 +70,10 @@ lyht_init_buckets_records(struct ly_ht *ht)
 
     ht->buckets = malloc(sizeof(ht->buckets[0]) * ht->size);
     LY_CHECK_ERR_RET(!ht->buckets, free(ht->recs); LOGMEM(NULL), LY_EMEM);
-    for (i = 0; i < ht->size; i++)
-        ht->buckets[i] = LYHT_NO_RECORD;
+    for (i = 0; i < ht->size; i++) {
+        ht->buckets[i].first = LYHT_NO_RECORD;
+        ht->buckets[i].last = LYHT_NO_RECORD;
+    }
     ht->first_free_rec = 0;
 
     return LY_SUCCESS;
@@ -178,7 +180,7 @@ static LY_ERR
 lyht_resize(struct ly_ht *ht, int operation)
 {
     struct ly_ht_rec *rec;
-    uint32_t *old_buckets;
+    struct ly_ht_bucket *old_buckets;
     unsigned char *old_recs;
     uint32_t old_first_free_rec;
     uint32_t i, old_size;
@@ -210,7 +212,7 @@ lyht_resize(struct ly_ht *ht, int operation)
 
     /* add all the old records into the new records array */
     for (i = 0; i < old_size; i++) {
-        for (rec_idx = old_buckets[i], rec = lyht_get_rec(old_recs, ht->rec_size, rec_idx);
+        for (rec_idx = old_buckets[i].first, rec = lyht_get_rec(old_recs, ht->rec_size, rec_idx);
              rec_idx != LYHT_NO_RECORD;
              rec_idx = rec->next, rec = lyht_get_rec(old_recs, ht->rec_size, rec_idx)) {
             LY_ERR ret;
@@ -343,7 +345,7 @@ __lyht_insert_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_
 {
     uint32_t bucket_idx = hash & (ht->size - 1);
     LY_ERR r, ret = LY_SUCCESS;
-    struct ly_ht_rec *rec;
+    struct ly_ht_rec *rec, *prev_rec;
     lyht_value_equal_cb old_val_equal = NULL;
     uint32_t rec_idx;
 
@@ -358,8 +360,15 @@ __lyht_insert_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_
     assert(rec_idx < ht->size);
     rec = lyht_get_rec(ht->recs, ht->rec_size, rec_idx);
     ht->first_free_rec = rec->next;
-    rec->next = ht->buckets[bucket_idx];
-    ht->buckets[bucket_idx] = rec_idx;
+
+    if (ht->buckets[bucket_idx].first == LYHT_NO_RECORD) {
+        ht->buckets[bucket_idx].first = rec_idx;
+    } else {
+        prev_rec = lyht_get_rec(ht->recs, ht->rec_size, ht->buckets[bucket_idx].last);
+        prev_rec->next = rec_idx;
+    }
+    rec->next = LYHT_NO_RECORD;
+    ht->buckets[bucket_idx].last = rec_idx;
 
     rec->hash = hash;
     memcpy(&rec->val, val_p, ht->rec_size - sizeof(struct ly_ht_rec));
@@ -429,10 +438,14 @@ lyht_remove_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_va
     }
 
     if (prev_rec_idx == LYHT_NO_RECORD) {
-        ht->buckets[bucket_idx] = rec->next;
+        ht->buckets[bucket_idx].first = rec->next;
+        if (rec->next == LYHT_NO_RECORD)
+            ht->buckets[bucket_idx].last = LYHT_NO_RECORD;
     } else {
         prev_rec = lyht_get_rec(ht->recs, ht->rec_size, prev_rec_idx);
         prev_rec->next = rec->next;
+        if (rec->next == LYHT_NO_RECORD)
+            ht->buckets[bucket_idx].last = prev_rec_idx;
     }
 
     rec->next = ht->first_free_rec;

@@ -47,6 +47,11 @@ struct ly_ht_rec {
     unsigned char val[]; /* arbitrary-size value */
 };
 
+struct ly_ht_bucket {
+    uint32_t first;
+    uint32_t last;
+};
+
 /**
  * @brief (Very) generic hash table.
  *
@@ -65,7 +70,7 @@ struct ly_ht {
                            * 2 - both shrinking and enlarging is enabled */
     uint16_t rec_size;    /* real size (in bytes) of one record for accessing recs array */
     uint32_t first_free_rec; /* index of the first free record */
-    uint32_t *buckets;    /* pointer to the buckets table */
+    struct ly_ht_bucket *buckets; /* pointer to the buckets table */
     unsigned char *recs;  /* pointer to the hash table itself (array of struct ht_rec) */
 };
 
@@ -88,7 +93,7 @@ lyht_get_rec(unsigned char *recs, uint16_t rec_size, uint32_t idx)
 
 /* Iterate all records in a bucket */
 #define LYHT_ITER_BUCKET_RECS(ht, bucket_idx, rec_idx, rec)             \
-    for (rec_idx = ht->buckets[bucket_idx],                             \
+    for (rec_idx = ht->buckets[bucket_idx].first,                       \
              rec = lyht_get_rec(ht->recs, ht->rec_size, rec_idx);       \
          rec_idx != LYHT_NO_RECORD;                                     \
          rec_idx = rec->next,                                           \
