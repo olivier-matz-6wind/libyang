@@ -34,35 +34,63 @@ test_invalid_arguments(void **state)
 }
 
 static void
-test_dict_hit(void **state)
+__test_dict_hit(void **state, const char *name1, const char *name2)
 {
     const char *str1, *str2, *str3;
+    char log_buffer[64];
 
     /* insert 2 strings, one of them repeatedly */
-    assert_int_equal(LY_SUCCESS, lydict_insert(UTEST_LYCTX, "test1", 0, &str1));
+    assert_int_equal(LY_SUCCESS, lydict_insert(UTEST_LYCTX, name1, 0, &str1));
     assert_non_null(str1);
     /* via zerocopy we have to get the same pointer as provided */
-    assert_non_null(str2 = strdup("test2"));
+    assert_non_null(str2 = strdup(name2));
     assert_int_equal(LY_SUCCESS, lydict_insert_zc(UTEST_LYCTX, (char *)str2, &str3));
     assert_ptr_equal(str2, str3);
     /* here we get the same pointer as in case the string was inserted first time */
-    assert_int_equal(LY_SUCCESS, lydict_insert(UTEST_LYCTX, "test1", 0, &str2));
+    assert_int_equal(LY_SUCCESS, lydict_insert(UTEST_LYCTX, name1, 0, &str2));
     assert_non_null(str2);
     assert_ptr_equal(str1, str2);
 
     /* remove strings, but the repeatedly inserted only once */
-    lydict_remove(UTEST_LYCTX, "test1");
-    lydict_remove(UTEST_LYCTX, "test2");
+    lydict_remove(UTEST_LYCTX, name1);
+    lydict_remove(UTEST_LYCTX, name2);
 
     /* destroy dictionary - should raise warning about data presence */
     ly_ctx_destroy(UTEST_LYCTX);
     UTEST_LYCTX = NULL;
-    CHECK_LOG("String \"test1\" not freed from the dictionary, refcount 1", NULL);
+    snprintf(log_buffer, sizeof(log_buffer),
+	     "String \"%s\" not freed from the dictionary, refcount 1", name1);
+    CHECK_LOG(log_buffer, NULL);
 
 #ifndef NDEBUG
     /* cleanup */
     free((char *)str1);
 #endif
+}
+
+static void
+test_dict_hit(void **state)
+{
+	__test_dict_hit(state, "test1", "test2");
+}
+
+static void
+test_dict_collision(void **state)
+{
+	const char *name1 = "a";
+	const char *name2 = "anprhkvr";
+
+	assert_int_equal(lyht_hash(name1, strlen(name1)), lyht_hash(name2, strlen(name2)));
+	__test_dict_hit(state, name1, name2);
+}
+
+static void
+test_dict_collision2(void **state)
+{
+	const char *name1 = "anprhkvr";
+	const char *name2 = "a";
+
+	__test_dict_hit(state, name1, name2);
 }
 
 static uint8_t
@@ -262,6 +290,8 @@ main(void)
     const struct CMUnitTest tests[] = {
         UTEST(test_invalid_arguments),
         UTEST(test_dict_hit),
+        UTEST(test_dict_collision),
+        UTEST(test_dict_collision2),
         UTEST(test_ht_basic),
         UTEST(test_ht_resize),
         UTEST(test_ht_collisions),

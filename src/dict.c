@@ -34,9 +34,9 @@
  * Implementation of ::lyht_value_equal_cb.
  */
 static ly_bool
-lydict_val_eq(void *val1_p, void *val2_p, ly_bool UNUSED(mod), void *cb_data)
+lydict_val_eq(void *val1_p, void *val2_p, ly_bool UNUSED(mod), void * UNUSED(cb_data))
 {
-    LY_CHECK_ARG_RET(NULL, val1_p, val2_p, cb_data, 0);
+    LY_CHECK_ARG_RET(NULL, val1_p, val2_p, 0);
 
     const char *str1 = ((struct ly_dict_rec *)val1_p)->value;
     const char *str2 = ((struct ly_dict_rec *)val2_p)->value;
@@ -44,7 +44,7 @@ lydict_val_eq(void *val1_p, void *val2_p, ly_bool UNUSED(mod), void *cb_data)
     LY_CHECK_ERR_RET(!str1, LOGARG(NULL, val1_p), 0);
     LY_CHECK_ERR_RET(!str2, LOGARG(NULL, val2_p), 0);
 
-    if (strncmp(str1, str2, *(size_t *)cb_data) == 0) {
+    if (strcmp(str1, str2) == 0) {
         return 1;
     }
 
@@ -139,8 +139,6 @@ lydict_remove(const struct ly_ctx *ctx, const char *value)
     rec.refcount = 0;
 
     pthread_mutex_lock((pthread_mutex_t *)&ctx->dict.lock);
-    /* set len as data for compare callback */
-    lyht_set_cb_data(ctx->dict.hash_tab, (void *)&len);
     /* check if value is already inserted */
     ret = lyht_find(ctx->dict.hash_tab, &rec, hash, (void **)&match);
 
@@ -172,7 +170,7 @@ finish:
 }
 
 LY_ERR
-dict_insert(const struct ly_ctx *ctx, char *value, size_t len, ly_bool zerocopy, const char **str_p)
+dict_insert(const struct ly_ctx *ctx, char *value, size_t len, const char **str_p)
 {
     LY_ERR ret = LY_SUCCESS;
     struct ly_dict_rec *match = NULL, rec;
@@ -181,8 +179,6 @@ dict_insert(const struct ly_ctx *ctx, char *value, size_t len, ly_bool zerocopy,
     LOGDBG(LY_LDGDICT, "inserting \"%.*s\"", (int)len, value);
 
     hash = lyht_hash(value, len);
-    /* set len as data for compare callback */
-    lyht_set_cb_data(ctx->dict.hash_tab, (void *)&len);
     /* create record for lyht_insert */
     rec.value = value;
     rec.refcount = 1;
@@ -190,28 +186,11 @@ dict_insert(const struct ly_ctx *ctx, char *value, size_t len, ly_bool zerocopy,
     ret = lyht_insert_with_resize_cb(ctx->dict.hash_tab, (void *)&rec, hash, lydict_resize_val_eq, (void **)&match);
     if (ret == LY_EEXIST) {
         match->refcount++;
-        if (zerocopy) {
-            free(value);
-        }
+        free(value);
         ret = LY_SUCCESS;
-    } else if (ret == LY_SUCCESS) {
-        if (!zerocopy) {
-            /*
-             * allocate string for new record
-             * record is already inserted in hash table
-             */
-            match->value = malloc(sizeof *match->value * (len + 1));
-            LY_CHECK_ERR_RET(!match->value, LOGMEM(ctx), LY_EMEM);
-            if (len) {
-                memcpy(match->value, value, len);
-            }
-            match->value[len] = '\0';
-        }
-    } else {
+    } else if (ret != LY_SUCCESS) {
         /* lyht_insert returned error */
-        if (zerocopy) {
-            free(value);
-        }
+        free(value);
         return ret;
     }
 
@@ -225,6 +204,7 @@ dict_insert(const struct ly_ctx *ctx, char *value, size_t len, ly_bool zerocopy,
 LIBYANG_API_DEF LY_ERR
 lydict_insert(const struct ly_ctx *ctx, const char *value, size_t len, const char **str_p)
 {
+    char *value_copy;
     LY_ERR result;
 
     LY_CHECK_ARG_RET(ctx, ctx, str_p, LY_EINVAL);
@@ -238,8 +218,14 @@ lydict_insert(const struct ly_ctx *ctx, const char *value, size_t len, const cha
         len = strlen(value);
     }
 
+    value_copy = malloc(len + 1);
+    LY_CHECK_ERR_RET(!value_copy, LOGMEM(ctx), LY_EMEM);
+
+    memcpy(value_copy, value, len);
+    value_copy[len] = '\0';
+
     pthread_mutex_lock((pthread_mutex_t *)&ctx->dict.lock);
-    result = dict_insert(ctx, (char *)value, len, 0, str_p);
+    result = dict_insert(ctx, value_copy, len, str_p);
     pthread_mutex_unlock((pthread_mutex_t *)&ctx->dict.lock);
 
     return result;
@@ -258,7 +244,7 @@ lydict_insert_zc(const struct ly_ctx *ctx, char *value, const char **str_p)
     }
 
     pthread_mutex_lock((pthread_mutex_t *)&ctx->dict.lock);
-    result = dict_insert(ctx, value, strlen(value), 1, str_p);
+    result = dict_insert(ctx, value, strlen(value), str_p);
     pthread_mutex_unlock((pthread_mutex_t *)&ctx->dict.lock);
 
     return result;
