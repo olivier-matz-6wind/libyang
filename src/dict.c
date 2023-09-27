@@ -40,11 +40,12 @@ lydict_val_eq(void *val1_p, void *val2_p, ly_bool UNUSED(mod), void *cb_data)
 
     const char *str1 = ((struct ly_dict_rec *)val1_p)->value;
     const char *str2 = ((struct ly_dict_rec *)val2_p)->value;
+    size_t len = *(size_t *)cb_data;
 
     LY_CHECK_ERR_RET(!str1, LOGARG(NULL, val1_p), 0);
     LY_CHECK_ERR_RET(!str2, LOGARG(NULL, val2_p), 0);
 
-    if (strncmp(str1, str2, *(size_t *)cb_data) == 0) {
+    if (strncmp(str1, str2, len) == 0 && str2[len] == '\0') {
         return 1;
     }
 
@@ -90,30 +91,6 @@ lydict_clean(struct ly_dict *dict)
     pthread_mutex_destroy(&dict->lock);
 }
 
-static ly_bool
-lydict_resize_val_eq(void *val1_p, void *val2_p, ly_bool mod, void *cb_data)
-{
-    LY_CHECK_ARG_RET(NULL, val1_p, val2_p, 0);
-
-    const char *str1 = ((struct ly_dict_rec *)val1_p)->value;
-    const char *str2 = ((struct ly_dict_rec *)val2_p)->value;
-
-    LY_CHECK_ERR_RET(!str1, LOGARG(NULL, val1_p), 0);
-    LY_CHECK_ERR_RET(!str2, LOGARG(NULL, val2_p), 0);
-
-    if (mod) {
-        /* used when inserting new values */
-        if (strcmp(str1, str2) == 0) {
-            return 1;
-        }
-    } else {
-        /* used when finding the original value again in the resized table */
-        return lydict_val_eq(val1_p, val2_p, mod, cb_data);
-    }
-
-    return 0;
-}
-
 LIBYANG_API_DEF LY_ERR
 lydict_remove(const struct ly_ctx *ctx, const char *value)
 {
@@ -154,7 +131,7 @@ lydict_remove(const struct ly_ctx *ctx, const char *value)
              * free it after it is removed from hash table
              */
             val_p = match->value;
-            ret = lyht_remove_with_resize_cb(ctx->dict.hash_tab, &rec, hash, lydict_resize_val_eq);
+            ret = lyht_remove(ctx->dict.hash_tab, &rec, hash);
             free(val_p);
             LY_CHECK_ERR_GOTO(ret, LOGINT(ctx), finish);
         }
@@ -185,7 +162,7 @@ dict_insert(const struct ly_ctx *ctx, char *value, size_t len, ly_bool zerocopy,
     rec.value = value;
     rec.refcount = 1;
 
-    ret = lyht_insert_with_resize_cb(ctx->dict.hash_tab, (void *)&rec, hash, lydict_resize_val_eq, (void **)&match);
+    ret = lyht_insert(ctx->dict.hash_tab, (void *)&rec, hash, (void **)&match);
     if (ret == LY_EEXIST) {
         match->refcount++;
         if (zerocopy) {

@@ -180,11 +180,12 @@ lyht_free(struct ly_ht *ht, void (*val_free)(void *val_p))
  * @return LY_ERR value.
  */
 static LY_ERR
-lyht_resize(struct ly_ht *ht, int operation, int check)
+lyht_resize(struct ly_ht *ht, int operation, void **val_p)
 {
     struct ly_ht_rec *rec;
     struct ly_ht_hlist *old_hlists;
     unsigned char *old_recs;
+    void *new_val_p = NULL;
     uint32_t old_first_free_rec;
     uint32_t i, old_size;
     uint32_t rec_idx;
@@ -220,14 +221,20 @@ lyht_resize(struct ly_ht *ht, int operation, int check)
              rec_idx = rec->next, rec = lyht_get_rec(old_recs, ht->rec_size, rec_idx)) {
             LY_ERR ret;
 
-            if (check)
-                ret = lyht_insert(ht, rec->val, rec->hash, NULL);
-            else
+            if (val_p && *val_p == (void *)rec->val) {
+                ret = lyht_insert_no_check(ht, rec->val, rec->hash, &new_val_p);
+            } else {
                 ret = lyht_insert_no_check(ht, rec->val, rec->hash, NULL);
+            }
 
             assert(!ret);
             (void)ret;
         }
+    }
+
+    assert(val_p == NULL || new_val_p != NULL);
+    if (val_p) {
+        *val_p = new_val_p;
     }
 
     /* final touches */
@@ -346,13 +353,11 @@ lyht_find_next(struct ly_ht *ht, void *val_p, uint32_t hash, void **match_p)
 }
 
 static LY_ERR
-__lyht_insert_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_value_equal_cb resize_val_equal,
-        void **match_p, int check)
+__lyht_insert(struct ly_ht *ht, void *val_p, uint32_t hash, void **match_p, int check)
 {
     uint32_t hlist_idx = hash & (ht->size - 1);
     LY_ERR r, ret = LY_SUCCESS;
     struct ly_ht_rec *rec, *prev_rec;
-    lyht_value_equal_cb old_val_equal = NULL;
     uint32_t rec_idx;
 
     if (check) {
@@ -393,51 +398,31 @@ __lyht_insert_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_
             ht->resize = 2;
         }
         if ((ht->resize == 2) && (r >= LYHT_ENLARGE_PERCENTAGE)) {
-            if (resize_val_equal) {
-                old_val_equal = lyht_set_cb(ht, resize_val_equal);
-            }
-
             /* enlarge */
-            ret = lyht_resize(ht, 1, check);
-            /* if hash_table was resized, we need to find new matching value */
-            if ((ret == LY_SUCCESS) && match_p) {
-                lyht_find(ht, val_p, hash, match_p);
-            }
-
-            if (resize_val_equal) {
-                lyht_set_cb(ht, old_val_equal);
-            }
+            lyht_resize(ht, 1, match_p);
         }
     }
     return ret;
 }
 
 LIBYANG_API_DEF LY_ERR
-lyht_insert_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_value_equal_cb resize_val_equal,
-        void **match_p)
-{
-    return __lyht_insert_with_resize_cb(ht, val_p, hash, resize_val_equal, match_p, 1);
-}
-
-LIBYANG_API_DEF LY_ERR
 lyht_insert(struct ly_ht *ht, void *val_p, uint32_t hash, void **match_p)
 {
-    return __lyht_insert_with_resize_cb(ht, val_p, hash, NULL, match_p, 1);
+    return __lyht_insert(ht, val_p, hash, match_p, 1);
 }
 
 LIBYANG_API_DEF LY_ERR
 lyht_insert_no_check(struct ly_ht *ht, void *val_p, uint32_t hash, void **match_p)
 {
-    return __lyht_insert_with_resize_cb(ht, val_p, hash, NULL, match_p, 0);
+    return __lyht_insert(ht, val_p, hash, match_p, 0);
 }
 
 LIBYANG_API_DEF LY_ERR
-lyht_remove_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_value_equal_cb resize_val_equal)
+lyht_remove(struct ly_ht *ht, void *val_p, uint32_t hash)
 {
     struct ly_ht_rec *found_rec, *prev_rec, *rec;
     uint32_t hlist_idx = hash & (ht->size - 1);
     LY_ERR r, ret = LY_SUCCESS;
-    lyht_value_equal_cb old_val_equal = NULL;
     uint32_t prev_rec_idx;
     uint32_t rec_idx;
 
@@ -470,26 +455,12 @@ lyht_remove_with_resize_cb(struct ly_ht *ht, void *val_p, uint32_t hash, lyht_va
     if (ht->resize == 2) {
         r = (ht->used * LYHT_HUNDRED_PERCENTAGE) / ht->size;
         if ((r < LYHT_SHRINK_PERCENTAGE) && (ht->size > LYHT_MIN_SIZE)) {
-            if (resize_val_equal) {
-                old_val_equal = lyht_set_cb(ht, resize_val_equal);
-            }
-
             /* shrink */
-            ret = lyht_resize(ht, -1, 1);
-
-            if (resize_val_equal) {
-                lyht_set_cb(ht, old_val_equal);
-            }
+            lyht_resize(ht, -1, NULL);
         }
     }
 
     return ret;
-}
-
-LIBYANG_API_DEF LY_ERR
-lyht_remove(struct ly_ht *ht, void *val_p, uint32_t hash)
-{
-    return lyht_remove_with_resize_cb(ht, val_p, hash, NULL);
 }
 
 LIBYANG_API_DEF uint32_t

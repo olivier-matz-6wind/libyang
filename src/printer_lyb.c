@@ -160,7 +160,7 @@ lyb_hash_siblings(struct lysc_node *sibling, struct ly_ht **ht_p)
             }
 
             /* try to insert node with the current collision ID */
-            if (!lyht_insert_with_resize_cb(ht, &sibling, lyb_get_hash(sibling, i), lyb_ptr_equal_cb, NULL)) {
+            if (!lyht_insert(ht, &sibling, lyb_get_hash(sibling, i), NULL)) {
                 /* success, no collision */
                 break;
             }
